@@ -1,0 +1,16 @@
+# Local credentials
+.env
+.env.*
+!.env.example
+
+# Dependencies and build output
+node_modules/
+dist/
+dist-ssr/
+build/
+coverage/
+
+# Local demo fixtures and test output
+/output/
+/tmp/
+/.nothi-*-qa/
