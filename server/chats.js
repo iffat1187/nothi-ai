@@ -1,7 +1,7 @@
 const express = require('express');
 const { randomUUID } = require('node:crypto');
 const { win32 } = require('node:path');
-const { answerChatQuestion, getQuestion } = require('./ask');
+const { answerChatQuestion, answerLegalQuestion, getQuestion } = require('./ask');
 const { sendAskQuotaError } = require('./ask-quota');
 const { extractPdf } = require('./pdf');
 const { extractPhoto } = require('./ocr');
@@ -26,10 +26,11 @@ function requireIdle(chat) {
 }
 
 function resetAttachmentContext(chat) {
+  chat.messages = chat.messages.filter(message => message.mode === 'legal');
+  chat.updatedAt = Date.now();
+  if (chat.messages.length) return;
   const title = Object.values(chat.attachments).filter(Boolean).map(attachment => attachment.name).join(' + ');
   chat.title = title.length > 72 ? title.slice(0, 71) + '…' : title || 'New chat';
-  chat.messages = [];
-  chat.updatedAt = Date.now();
 }
 
 router.use(requireUser, (_request, response, next) => {
@@ -148,17 +149,23 @@ router.post('/:chatId/messages', readJson, async (request, response) => {
   const { chat } = response.locals;
   requireIdle(chat);
   const question = getQuestion(request.body?.question);
+  const mode = request.body.mode ?? 'document';
+  if (mode !== 'document' && mode !== 'legal') throw new RequestError(400, 'Choose Attachments or Legal search.');
 
   chat.busy = 'answering';
   try {
+    const { id: userId } = response.locals.user;
+    const history = chat.messages.filter(message => (message.mode ?? 'document') === mode);
     const attachments = Object.values(chat.attachments).filter(Boolean);
-    const answer = await answerChatQuestion(response.locals.user.id, question, attachments, chat.messages);
+    const answer = mode === 'legal'
+      ? await answerLegalQuestion(userId, question, history)
+      : await answerChatQuestion(userId, question, attachments, history);
     if (!chat.messages.length) {
       chat.title = question.length > 55 ? question.slice(0, 54).trimEnd() + '…' : question;
     }
     chat.messages.push(
-      { id: randomUUID(), role: 'user', content: question },
-      { id: randomUUID(), role: 'assistant', ...answer },
+      { id: randomUUID(), role: 'user', mode, content: question },
+      { id: randomUUID(), role: 'assistant', mode, ...answer },
     );
     chat.updatedAt = Date.now();
   } finally {

@@ -53,7 +53,7 @@ export default function DocumentReview({ document, pageNumber, hasMessages, onSa
         <form className="review-body photo-edit" onSubmit={save}>
           <label htmlFor="review-photo">Review photo text (page 1)</label>
           <textarea id="review-photo" value={text} onChange={event => setText(event.target.value)} rows={10} dir="auto" disabled={saving} />
-          {hasMessages && <p>Saving changes clears the current conversation.</p>}
+          {hasMessages && <p>Saving changes clears questions and answers about your files.</p>}
           {error && <p className="error-text" role="alert">{error}</p>}
           <button className="primary" type="submit" disabled={saving || !text.trim() || text.trim() === document.pages[0].text}>
             {saving ? 'Saving…' : 'Save text'}

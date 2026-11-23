@@ -22,7 +22,7 @@ function questionLimitMessage(limit, period) {
   return 'You’ve reached your limit of ' + limit + ' ' + noun + ' per ' + period + '.';
 }
 
-function reserveAsk(userId, messages) {
+function prepareAsk(userId, estimatedInputTokens) {
   if (!userId) throw new RequestError(401, 'Sign in to continue.');
   const { questionsPerMinute, questionsPerDay, maxOutputTokens, dailyTokenBudget } = getUsageLimits();
   const now = Date.now();
@@ -41,11 +41,9 @@ function reserveAsk(userId, messages) {
     throw new AskQuotaError('daily_questions', questionLimitMessage(questionsPerDay, 'day'), day.resetAt);
   }
 
-  // The free router can select different tokenizers, so use a conservative UTF-8 byte estimate.
-  const estimatedInputTokens = Buffer.byteLength(JSON.stringify(messages), 'utf8') + 8 * messages.length;
   const reservedTokens = estimatedInputTokens + maxOutputTokens;
   if (reservedTokens > dailyTokenBudget) {
-    throw new AskQuotaError('daily_tokens', 'This question and its context are larger than your daily token budget. Try a shorter question or document.', day.resetAt);
+    throw new AskQuotaError('daily_tokens', 'This question and its source context are larger than your daily token budget.', day.resetAt);
   }
   if (day.tokens + reservedTokens > dailyTokenBudget) {
     throw new AskQuotaError('daily_tokens', 'This question would exceed your daily token budget.', day.resetAt);
@@ -55,9 +53,29 @@ function reserveAsk(userId, messages) {
     throw new AskQuotaError('minute_questions', questionLimitMessage(questionsPerMinute, 'minute'), lastBlockingRequest + minuteMs);
   }
 
-  // These checks and updates are synchronous, including the reservation for in-flight calls.
+  return { account, day, now, maxOutputTokens, reservedTokens };
+}
+
+function recordQuestion({ account, day, now }) {
   account.recent.push(now);
   day.questions += 1;
+}
+
+function checkAskAllowance(userId) {
+  prepareAsk(userId, 0);
+}
+
+function recordAskWithoutModel(userId) {
+  recordQuestion(prepareAsk(userId, 0));
+}
+
+function reserveAsk(userId, messages) {
+  // The free router can select different tokenizers, so use a conservative UTF-8 byte estimate.
+  const estimatedInputTokens = Buffer.byteLength(JSON.stringify(messages), 'utf8') + 8 * messages.length;
+  const reservation = prepareAsk(userId, estimatedInputTokens);
+  const { day, maxOutputTokens, reservedTokens } = reservation;
+  // Keep checks and updates synchronous so in-flight calls share the same quota.
+  recordQuestion(reservation);
   day.tokens += reservedTokens;
 
   function reconcileUsage(usage) {
@@ -85,4 +103,4 @@ function sendAskQuotaError(error, response) {
   return true;
 }
 
-module.exports = { reserveAsk, sendAskQuotaError };
+module.exports = { checkAskAllowance, recordAskWithoutModel, reserveAsk, sendAskQuotaError };

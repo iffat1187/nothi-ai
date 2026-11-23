@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowUp, FolderCheck, LoaderCircle, Paperclip } from 'lucide-react'
+import { ArrowUp, ExternalLink, FolderCheck, LoaderCircle, Paperclip } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import Attachments from './Attachments.jsx'
 import DocumentReview from './DocumentReview.jsx'
@@ -24,7 +24,9 @@ function ChatMessage({ message, openReview }) {
 
   return (
     <article className="assistant-message" aria-label="Nothi AI answer">
-      <div className="message-author"><FolderCheck size={18} aria-hidden="true" /> Nothi AI</div>
+      <div className="message-author">
+        <FolderCheck size={18} aria-hidden="true" /> Nothi AI{message.mode === 'legal' && ' · Legal search'}
+      </div>
       <div className="answer-content" dir="auto">
         <ReactMarkdown
           skipHtml
@@ -33,6 +35,14 @@ function ChatMessage({ message, openReview }) {
             a: ({ href, children }) => {
               const id = Number(/^#source-(\d+)$/.exec(href ?? '')?.[1])
               const source = message.citations?.find(citation => citation.id === id)
+              if (source?.kind === 'law') {
+                return (
+                  <a className="citation law-citation" href={source.officialUrl} target="_blank" rel="noopener noreferrer"
+                    aria-label={source.label + ' (official source, opens in a new tab)'}>
+                    {source.label} <ExternalLink size={11} aria-hidden="true" />
+                  </a>
+                )
+              }
               return source
                 ? <button className="citation" type="button" onClick={() => openReview(source.kind, source.pageNumber)}>{source.label}</button>
                 : <span>{children}</span>
@@ -49,6 +59,7 @@ function ChatMessage({ message, openReview }) {
 export default function ChatView({ id, onUpdate }) {
   const [chat, setChat] = useState(null)
   const [draft, setDraft] = useState('')
+  const [mode, setMode] = useState('document')
   const [pending, setPending] = useState(null)
   const [error, setError] = useState('')
   const [uploadIssues, setUploadIssues] = useState({})
@@ -63,6 +74,8 @@ export default function ChatView({ id, onUpdate }) {
   const remoteBusy = Boolean(chat?.busy && !pending)
   const attachments = chat?.attachments ?? {}
   const hasAttachments = Boolean(attachments.pdf || attachments.photo)
+  const isLegal = mode === 'legal'
+  const canSend = Boolean(chat && (isLegal || hasAttachments) && draft.trim() && !busy)
   const uploads = {
     ...chat?.uploads,
     ...uploadIssues,
@@ -217,13 +230,13 @@ export default function ChatView({ id, onUpdate }) {
 
   async function send(event) {
     event.preventDefault()
+    if (!canSend) return
     const question = draft.trim()
-    if (!hasAttachments || !question || busy) return
 
     setError('')
     setPending({ kind: 'answering', question })
     try {
-      update(await request(endpoint + '/messages', jsonRequest('POST', { question })))
+      update(await request(endpoint + '/messages', jsonRequest('POST', { question, mode })))
       setDraft('')
     } catch (error) {
       setError(error.message)
@@ -237,6 +250,7 @@ export default function ChatView({ id, onUpdate }) {
   }
 
   const messageCount = chat?.messages.length ?? 0
+  const hasDocumentMessages = Boolean(chat?.messages.some(message => message.mode !== 'legal'))
   const reviewedAttachment = attachments[review?.kind]
 
   return (
@@ -254,10 +268,10 @@ export default function ChatView({ id, onUpdate }) {
           {chat && !messageCount && !busy && (
             <div className="empty-chat">
               <div className="empty-icon"><FolderCheck size={34} strokeWidth={1.4} aria-hidden="true" /></div>
-              <h2>{hasAttachments ? 'What would you like to ask?' : 'Start with a document'}</h2>
-              <p>{hasAttachments
-                ? 'Ask about the attached files. Answers cite their sources.'
-                : 'Attach a PDF, a photo, or both to ask about their contents.'}</p>
+              <h2>{isLegal ? 'Search legal texts' : (hasAttachments ? 'What would you like to ask?' : 'Start with a document')}</h2>
+              <p>{isLegal ? 'Ask about the indexed legal texts. Answers link to their official sources.' : (
+                hasAttachments ? 'Ask about the attached files. Answers cite their sources.' : 'Attach a PDF, a photo, or both to ask about their contents.'
+              )}</p>
             </div>
           )}
           {chat?.messages.map(message => <ChatMessage key={message.id} message={message} openReview={openReview} />)}
@@ -289,7 +303,9 @@ export default function ChatView({ id, onUpdate }) {
           />
           <textarea
             aria-label="Message"
-            placeholder={hasAttachments ? 'Ask about the attached files…' : 'Attach a PDF or photo to get started…'}
+            placeholder={isLegal ? 'Ask about the indexed legal texts…' : (
+              hasAttachments ? 'Ask about the attached files…' : 'Attach a PDF or photo to get started…'
+            )}
             rows={2}
             maxLength={2000}
             value={draft}
@@ -316,17 +332,27 @@ export default function ChatView({ id, onUpdate }) {
             />
             <input ref={pdfInput} type="file" accept={pdfTypes} onChange={event => attach(event, 'pdf')} hidden />
             <input ref={photoInput} type="file" accept={photoTypes} onChange={event => attach(event, 'photo')} hidden />
-            <button className="subtle-button attach-button" type="button" onClick={() => fileInput.current.click()} disabled={!chat || Boolean(busy)}>
-              <Paperclip size={18} aria-hidden="true" /> Attach
-            </button>
-            <button className="primary send-button" type="submit" disabled={!hasAttachments || !draft.trim() || Boolean(busy)}>
+            <div className="composer-tools">
+              <button className="subtle-button attach-button" type="button" onClick={() => fileInput.current.click()} disabled={!chat || Boolean(busy)}>
+                <Paperclip size={18} aria-hidden="true" /> Attach
+              </button>
+              <select className="ask-mode" aria-label="Ask mode" value={mode} onChange={event => setMode(event.target.value)} disabled={Boolean(busy)}>
+                <option value="document">Attachments</option>
+                <option value="legal">Legal search</option>
+              </select>
+            </div>
+            <button className="primary send-button" type="submit" disabled={!canSend}>
               Send <ArrowUp size={17} aria-hidden="true" />
             </button>
           </div>
         </form>
         <p className="composer-note">
-          {messageCount ? 'Changing attachments clears this conversation.' : 'One PDF and one JPG, JPEG, or PNG · Up to 5 MB each'}
-          {hasAttachments && ' · Sending a message shares the extracted text with OpenRouter.'}
+          {isLegal ? 'Legal search sends your question to Qdrant Cloud and the retrieved passages to OpenRouter.' : (
+            <>
+              {hasDocumentMessages ? 'Changing attachments clears answers about your files.' : 'One PDF and one JPG, JPEG, or PNG · Up to 5 MB each'}
+              {hasAttachments && ' · Sending a message shares the extracted text with OpenRouter.'}
+            </>
+          )}
         </p>
       </div>
 
@@ -334,7 +360,7 @@ export default function ChatView({ id, onUpdate }) {
         <DocumentReview
           document={reviewedAttachment}
           pageNumber={review.pageNumber}
-          hasMessages={messageCount > 0}
+          hasMessages={hasDocumentMessages}
           onSave={saveReview}
           onClose={() => setReview(null)}
         />

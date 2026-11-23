@@ -377,6 +377,9 @@
   vertical-align: baseline;
 }
 .citation:hover { background: var(--accent-soft-hover); text-decoration: underline; }
+.law-citation { text-decoration: none; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.law-citation svg { vertical-align: -1px; }
+.law-citation:focus-visible, .ask-mode:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 
 .composer-region { padding: 5px 0 14px; }
 .composer {
@@ -405,8 +408,22 @@
 }
 .composer textarea::placeholder, .photo-edit textarea::placeholder { color: var(--placeholder); opacity: 1; }
 .composer textarea:disabled, .photo-edit textarea:disabled { color: var(--disabled-text); }
-.composer-actions { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.composer-actions, .composer-tools { display: flex; align-items: center; gap: 8px; }
+.composer-actions { justify-content: space-between; flex-wrap: wrap; }
+.composer-tools { flex-wrap: wrap; }
 .attach-button { color: var(--accent-strong); }
+.ask-mode {
+  min-height: 39px;
+  padding: 6px 8px;
+  border: 1px solid var(--control-line);
+  border-radius: 8px;
+  color: var(--accent-strong);
+  background: var(--surface);
+  font: inherit;
+  font-size: 13px;
+}
+.ask-mode:hover:not(:disabled) { background: var(--hover); }
+.ask-mode:disabled { color: var(--disabled-text); }
 .send-button { border-radius: 999px; }
 .composer-note { padding: 9px 4px 0; color: var(--muted); text-align: center; font-size: 12px; line-height: 1.5; }
 .attachment-list {

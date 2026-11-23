@@ -301,7 +301,7 @@ function ChatWorkspace({ user, onSignOut }) {
             <div className="empty-chat empty-chat-list">
               <div className="empty-icon"><FolderCheck size={34} strokeWidth={1.4} aria-hidden="true" /></div>
               <h2>No chats yet</h2>
-              <p>Start a new chat to ask about a PDF or photo.</p>
+              <p>Start a new chat to ask about a PDF or photo, or search the indexed legal texts.</p>
               <button className="primary" type="button" onClick={newChat} disabled={creating}>
                 <Plus size={17} aria-hidden="true" />
                 {creating ? 'Creating…' : 'New chat'}
