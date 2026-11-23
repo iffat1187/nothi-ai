@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Ellipsis, FolderCheck, LogOut, Menu, MessageSquare, Plus, Trash2, UserRound } from 'lucide-react'
+import { Ellipsis, FolderCheck, LogOut, Menu, MessageSquare, Plus, SlidersHorizontal, Trash2, UserRound } from 'lucide-react'
 import AppHeader from './AppHeader.jsx'
 import AuthForm from './AuthForm.jsx'
 import ChatView from './ChatView.jsx'
 import DeleteChatDialog from './DeleteChatDialog.jsx'
+import UsageLimits from './UsageLimits.jsx'
 import { request, sessionRequired } from './chat-api.js'
 import './App.css'
 
 const sessionChangeKey = 'nothi-session-change'
 const desktopQuery = '(min-width: 760px)'
+const usageLimitsHash = '#usage-limits'
 
 function announceSessionChange() {
   try {
@@ -32,7 +34,10 @@ function ChatWorkspace({ user, onSignOut }) {
   const [attempt, setAttempt] = useState(0)
   const [openMenuId, setOpenMenuId] = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
+  const [hash, setHash] = useState(() => window.location.hash)
   const deletedChats = useRef(new Set())
+  const isAdmin = user.role === 'admin'
+  const showingUsageLimits = isAdmin && hash === usageLimitsHash
 
   const selectChat = useCallback(id => {
     localStorage.setItem(activeChatKey, id ?? '')
@@ -91,9 +96,22 @@ function ChatWorkspace({ user, onSignOut }) {
     return () => document.removeEventListener('pointerdown', closeOutside)
   }, [openMenuId])
 
+  useEffect(() => {
+    function updatePage() {
+      setHash(window.location.hash)
+    }
+    window.addEventListener('hashchange', updatePage)
+    return () => window.removeEventListener('hashchange', updatePage)
+  }, [])
+
+  function closeUsageLimits() {
+    window.location.hash = ''
+  }
+
   function openChat(id) {
     setOpenMenuId(null)
     selectChat(id)
+    if (showingUsageLimits) closeUsageLimits()
     if (!window.matchMedia(desktopQuery).matches) setSidebarOpen(false)
   }
 
@@ -191,6 +209,20 @@ function ChatWorkspace({ user, onSignOut }) {
             <Plus size={17} aria-hidden="true" />
             {creating ? 'Creating…' : 'New chat'}
           </button>
+          {isAdmin && (
+            <button
+              type="button"
+              className="subtle-button sidebar-usage-limits"
+              aria-current={showingUsageLimits ? 'page' : undefined}
+              onClick={() => {
+                setOpenMenuId(null)
+                window.location.hash = usageLimitsHash
+                if (!window.matchMedia(desktopQuery).matches) setSidebarOpen(false)
+              }}
+            >
+              <SlidersHorizontal size={17} aria-hidden="true" /> Usage limits
+            </button>
+          )}
           <nav className="chat-navigation" aria-label="Chats">
             <h2>Chats</h2>
             {chats.map(chat => {
@@ -211,7 +243,7 @@ function ChatWorkspace({ user, onSignOut }) {
                       id={'chat-select-' + chat.id}
                       type="button"
                       title={chat.title}
-                      aria-current={chat.id === activeId ? 'page' : undefined}
+                      aria-current={!showingUsageLimits && chat.id === activeId ? 'page' : undefined}
                       onClick={() => openChat(chat.id)}
                     >
                       <MessageSquare size={16} strokeWidth={1.75} aria-hidden="true" />
@@ -263,9 +295,9 @@ function ChatWorkspace({ user, onSignOut }) {
               </button>
             </div>
           )}
-          {activeId && <ChatView key={activeId} id={activeId} onUpdate={updateSummary} />}
-          {starting && !activeId && <p className="chat-loading" role="status">Loading chats…</p>}
-          {!starting && connected && !activeId && (
+          {showingUsageLimits ? <UsageLimits onBack={closeUsageLimits} /> : activeId && <ChatView key={activeId} id={activeId} onUpdate={updateSummary} />}
+          {!showingUsageLimits && starting && !activeId && <p className="chat-loading" role="status">Loading chats…</p>}
+          {!showingUsageLimits && !starting && connected && !activeId && (
             <div className="empty-chat empty-chat-list">
               <div className="empty-icon"><FolderCheck size={34} strokeWidth={1.4} aria-hidden="true" /></div>
               <h2>No chats yet</h2>

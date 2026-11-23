@@ -1,5 +1,6 @@
 const express = require('express');
 const RequestError = require('./request-error');
+const { reserveAsk, sendAskQuotaError } = require('./ask-quota');
 
 const askRouter = express.Router();
 const noAnswerSignal = 'NO_ANSWER';
@@ -35,7 +36,7 @@ function usablePages(pages) {
     .map(({ pageNumber, text }) => ({ pageNumber, text: text.trim() }));
 }
 
-async function requestAnswer(question, sources, history, citationInstructions) {
+async function requestAnswer(userId, question, sources, history, citationInstructions) {
   if (!sources.length) throw new RequestError(400, missingSource);
   if (JSON.stringify(sources).length > 24000) throw new RequestError(413, sourceTooLong);
 
@@ -44,6 +45,12 @@ async function requestAnswer(question, sources, history, citationInstructions) {
 
   const recentMessages = history.slice(-2 * recentTurns)
     .map(({ role, content }) => ({ role, content: content.slice(0, historyMessageLength) }));
+  const messages = [
+    { role: 'system', content: instructions + ' ' + citationInstructions },
+    ...recentMessages,
+    { role: 'user', content: JSON.stringify({ question, sources }) },
+  ];
+  const { maxOutputTokens, reconcileUsage } = reserveAsk(userId, messages);
 
   try {
     const upstream = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -55,18 +62,20 @@ async function requestAnswer(question, sources, history, citationInstructions) {
       },
       body: JSON.stringify({
         model: 'openrouter/free',
-        max_tokens: 2048,
-        messages: [
-          { role: 'system', content: instructions + ' ' + citationInstructions },
-          ...recentMessages,
-          { role: 'user', content: JSON.stringify({ question, sources }) },
-        ],
+        max_completion_tokens: maxOutputTokens,
+        provider: { require_parameters: true },
+        messages,
       }),
       signal: AbortSignal.timeout(45000),
     });
 
+    const result = await upstream.json().catch(error => {
+      if (upstream.ok) throw error;
+      return null;
+    });
+    reconcileUsage(result?.usage);
+
     if (!upstream.ok) {
-      await upstream.body?.cancel();
       if (upstream.status === 401 || upstream.status === 403) {
         throw new RequestError(503, 'OpenRouter rejected the server API key. Check it and restart Express.');
       }
@@ -76,7 +85,6 @@ async function requestAnswer(question, sources, history, citationInstructions) {
       throw new RequestError(502, 'OpenRouter could not answer right now. Try again shortly.');
     }
 
-    const result = await upstream.json();
     const content = result?.choices?.[0]?.message?.content;
     const answer = typeof content === 'string' ? content.trim() : '';
     if (!answer || answer.includes(apiKey)) throw new RequestError(502, unusableAnswer);
@@ -90,9 +98,9 @@ async function requestAnswer(question, sources, history, citationInstructions) {
   }
 }
 
-async function answerQuestion(question, pages, history = []) {
+async function answerQuestion(userId, question, pages, history = []) {
   const sources = usablePages(pages);
-  const answer = await requestAnswer(question, sources, history,
+  const answer = await requestAnswer(userId, question, sources, history,
     'Cite factual claims inline with their exact page number, for example [Page 2].');
   if (answer.toUpperCase() === noAnswerSignal) return 'I could not find the answer in the uploaded document.';
 
@@ -104,7 +112,7 @@ async function answerQuestion(question, pages, history = []) {
   return answer;
 }
 
-async function answerChatQuestion(question, attachments, history) {
+async function answerChatQuestion(userId, question, attachments, history) {
   const references = new Map();
   const sources = attachments.map(({ kind, name, pages }) => ({
     filename: name,
@@ -116,7 +124,7 @@ async function answerChatQuestion(question, attachments, history) {
       return { pageNumber, text, citation: '[S' + id + ']' };
     }),
   })).filter(source => source.pages.length);
-  const answer = await requestAnswer(question, sources, history,
+  const answer = await requestAnswer(userId, question, sources, history,
     'Cite each factual claim using the exact citation token for its source page, such as [S2]. Copy the token verbatim. When using more than one file, cite each file where you use it.');
   if (answer.toUpperCase() === noAnswerSignal) {
     return { content: 'I could not find the answer in the attached files.', citations: [] };
@@ -148,11 +156,12 @@ async function answerChatQuestion(question, attachments, history) {
 
 askRouter.post('/', express.json({ limit: '256kb' }), async (request, response) => {
   const { question, pages } = request.body ?? {};
-  response.json({ answer: await answerQuestion(getQuestion(question), pages) });
+  response.json({ answer: await answerQuestion(response.locals.user.id, getQuestion(question), pages) });
 });
 
 askRouter.use((error, _request, response, next) => {
   if (response.headersSent) return next(error);
+  if (sendAskQuotaError(error, response)) return;
   if (error.type === 'entity.too.large') return response.status(413).json({ error: sourceTooLong });
   const message = error instanceof RequestError ? error.message : 'The question could not be processed.';
   response.status(error.status || 500).json({ error: message });

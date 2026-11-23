@@ -1,13 +1,13 @@
 const express = require('express');
 const { randomBytes, randomUUID, scrypt, timingSafeEqual } = require('node:crypto');
-const { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } = require('node:fs');
-const path = require('node:path');
 const { promisify } = require('node:util');
+const { accountsFile, readLocalJson, writeLocalJson } = require('./local-data');
 const RequestError = require('./request-error');
 
 const router = express.Router();
 const readCredentials = express.json({ limit: '4kb' });
-const accountsFile = process.env.NOTHI_ACCOUNTS_FILE || path.join(__dirname, 'data', 'accounts.json');
+const adminIds = new Set((process.env.NOTHI_ADMIN_USER_IDS ?? '').split(',')
+  .map(id => id.trim().toLowerCase()).filter(Boolean));
 const sessionCookie = 'nothi_session';
 const sessionLifetime = 12 * 60 * 60 * 1000;
 const sessions = new Map();
@@ -18,10 +18,9 @@ const fallbackHash = randomBytes(64);
 
 function readAccounts() {
   try {
-    const records = JSON.parse(readFileSync(accountsFile, 'utf8'));
+    const records = readLocalJson(accountsFile, []);
     return new Map(records.map(account => [account.username, account]));
   } catch (error) {
-    if (error.code === 'ENOENT') return new Map();
     throw new Error('Could not read the local account store.', { cause: error });
   }
 }
@@ -31,15 +30,7 @@ const accounts = readAccounts();
 function saveAccount(account) {
   if (accounts.has(account.username)) throw new RequestError(409, 'That username is already taken.');
 
-  mkdirSync(path.dirname(accountsFile), { recursive: true });
-  const temporaryFile = accountsFile + '.' + randomUUID() + '.tmp';
-  try {
-    const records = [...accounts.values(), account];
-    writeFileSync(temporaryFile, JSON.stringify(records), { mode: 0o600, flag: 'wx' });
-    renameSync(temporaryFile, accountsFile);
-  } finally {
-    rmSync(temporaryFile, { force: true });
-  }
+  writeLocalJson(accountsFile, [...accounts.values(), account]);
   accounts.set(account.username, account);
 }
 
@@ -56,7 +47,7 @@ function getCredentials(request) {
 }
 
 function publicUser({ id, username }) {
-  return { id, username };
+  return { id, username, role: adminIds.has(id.toLowerCase()) ? 'admin' : 'user' };
 }
 
 function getSessionToken(request) {

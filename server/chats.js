@@ -2,6 +2,7 @@ const express = require('express');
 const { randomUUID } = require('node:crypto');
 const { win32 } = require('node:path');
 const { answerChatQuestion, getQuestion } = require('./ask');
+const { sendAskQuotaError } = require('./ask-quota');
 const { extractPdf } = require('./pdf');
 const { extractPhoto } = require('./ocr');
 const { requireUser } = require('./auth');
@@ -151,7 +152,7 @@ router.post('/:chatId/messages', readJson, async (request, response) => {
   chat.busy = 'answering';
   try {
     const attachments = Object.values(chat.attachments).filter(Boolean);
-    const answer = await answerChatQuestion(question, attachments, chat.messages);
+    const answer = await answerChatQuestion(response.locals.user.id, question, attachments, chat.messages);
     if (!chat.messages.length) {
       chat.title = question.length > 55 ? question.slice(0, 54).trimEnd() + '…' : question;
     }
@@ -168,6 +169,7 @@ router.post('/:chatId/messages', readJson, async (request, response) => {
 
 router.use((error, request, response, next) => {
   if (response.headersSent) return next(error);
+  if (sendAskQuotaError(error, response)) return;
   if (error.type === 'entity.too.large') {
     const message = request.is('application/json') ? 'The text is too large.' : 'The file must be 5 MB or smaller.';
     return response.status(413).json({ error: message });

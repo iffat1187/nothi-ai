@@ -9,6 +9,7 @@ try {
 
 const express = require('express');
 const { authRouter, requireUser } = require('./auth');
+const adminRouter = require('./admin');
 const { askRouter } = require('./ask');
 const { ocrRouter } = require('./ocr');
 const { pdfRouter } = require('./pdf');
@@ -33,6 +34,7 @@ app.get('/api/health', (_request, response) => {
 });
 
 app.use('/api/auth', authRouter);
+app.use('/api/admin', adminRouter);
 app.use('/api/ask', requireUser, askRouter);
 app.use('/api/ocr', requireUser, ocrRouter);
 app.use('/api/extract', requireUser, pdfRouter);

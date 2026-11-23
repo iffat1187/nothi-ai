@@ -14,7 +14,13 @@ export async function request(url, options) {
     if (!response.ok && response.status === 401 && !url.startsWith('/api/auth/')) {
       window.dispatchEvent(new Event(sessionRequired))
     }
-    const error = new Error(body?.error || 'The request could not be completed. Try again.')
+    let message = body?.error || 'The request could not be completed. Try again.'
+    const resetAt = response.status === 429 ? Date.parse(body?.resetAt) : NaN
+    if (Number.isFinite(resetAt)) {
+      const resetTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'medium' }).format(resetAt)
+      message += ' Your limit resets on ' + resetTime + '.'
+    }
+    const error = new Error(message)
     error.chat = body?.chat
     throw error
   }
