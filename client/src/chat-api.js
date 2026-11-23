@@ -1,3 +1,5 @@
+export const sessionRequired = 'nothi-session-required'
+
 export async function request(url, options) {
   let response
   try {
@@ -9,6 +11,9 @@ export async function request(url, options) {
 
   const body = await response.json().catch(() => null)
   if (!response.ok || body === null) {
+    if (!response.ok && response.status === 401 && !url.startsWith('/api/auth/')) {
+      window.dispatchEvent(new Event(sessionRequired))
+    }
     const error = new Error(body?.error || 'The request could not be completed. Try again.')
     error.chat = body?.chat
     throw error

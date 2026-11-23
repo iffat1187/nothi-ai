@@ -1,21 +1,33 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Ellipsis, FolderCheck, Menu, MessageSquare, Plus, Trash2 } from 'lucide-react'
+import { Ellipsis, FolderCheck, LogOut, Menu, MessageSquare, Plus, Trash2, UserRound } from 'lucide-react'
+import AppHeader from './AppHeader.jsx'
+import AuthForm from './AuthForm.jsx'
 import ChatView from './ChatView.jsx'
 import DeleteChatDialog from './DeleteChatDialog.jsx'
-import ThemeToggle from './ThemeToggle.jsx'
-import { request } from './chat-api.js'
+import { request, sessionRequired } from './chat-api.js'
 import './App.css'
 
-const activeChatKey = 'nothi-active-chat'
+const sessionChangeKey = 'nothi-session-change'
 const desktopQuery = '(min-width: 760px)'
 
-function App() {
+function announceSessionChange() {
+  try {
+    localStorage.setItem(sessionChangeKey, crypto.randomUUID())
+  } catch {
+    // The current tab still uses the server's session.
+  }
+}
+
+function ChatWorkspace({ user, onSignOut }) {
+  const activeChatKey = 'nothi-active-chat:' + user.id
   const [sidebarOpen, setSidebarOpen] = useState(() => window.matchMedia(desktopQuery).matches)
   const [chats, setChats] = useState([])
   const [activeId, setActiveId] = useState(null)
   const [starting, setStarting] = useState(true)
   const [connected, setConnected] = useState(false)
   const [creating, setCreating] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
+  const [signOutError, setSignOutError] = useState('')
   const [startupError, setStartupError] = useState('')
   const [attempt, setAttempt] = useState(0)
   const [openMenuId, setOpenMenuId] = useState(null)
@@ -25,7 +37,7 @@ function App() {
   const selectChat = useCallback(id => {
     localStorage.setItem(activeChatKey, id ?? '')
     setActiveId(id)
-  }, [])
+  }, [activeChatKey])
 
   const updateSummary = useCallback(({ id, title, updatedAt }) => {
     setChats(previous => {
@@ -66,7 +78,7 @@ function App() {
 
     start()
     return () => controller.abort()
-  }, [attempt, selectChat, updateSummary])
+  }, [activeChatKey, attempt, selectChat, updateSummary])
 
   useEffect(() => {
     if (!openMenuId) return
@@ -118,10 +130,24 @@ function App() {
     })
   }
 
+  async function signOut() {
+    if (signingOut) return
+    setSigningOut(true)
+    setSignOutError('')
+    try {
+      await onSignOut()
+    } catch (error) {
+      setSignOutError(error.message)
+    } finally {
+      setSigningOut(false)
+    }
+  }
+
   return (
     <div className="app">
-      <header className="app-header">
-        <div className="header-brand">
+      <AppHeader
+        status={starting ? 'Connecting…' : connected ? 'API connected' : 'API unavailable'}
+        sidebar={
           <button
             className="icon-button menu-toggle"
             type="button"
@@ -135,17 +161,23 @@ function App() {
           >
             <Menu size={20} aria-hidden="true" />
           </button>
-          <FolderCheck className="brand-mark" size={26} strokeWidth={1.65} aria-hidden="true" />
-          <h1>Nothi AI</h1>
-          <span className="brand-bangla" lang="bn">নথি এআই</span>
-        </div>
-        <div className="header-tools">
-          <p className={connected ? 'api-status connected' : 'api-status'} role="status">
-            <span>{starting ? 'Connecting…' : connected ? 'API connected' : 'API unavailable'}</span>
-          </p>
-          <ThemeToggle />
-        </div>
-      </header>
+        }
+        account={
+          <div className="account-tools">
+            <span className="account-name" title={user.username}>{user.username}</span>
+            <button
+              className="icon-button sign-out"
+              type="button"
+              aria-label={signingOut ? 'Signing out' : 'Sign out'}
+              title={'Sign out of ' + user.username}
+              onClick={signOut}
+              disabled={signingOut}
+            >
+              <LogOut size={18} aria-hidden="true" />
+            </button>
+          </div>
+        }
+      />
 
       <div className="app-layout">
         {sidebarOpen && (
@@ -211,10 +243,14 @@ function App() {
               )
             })}
           </nav>
-          <p className="sidebar-note">Chats are kept until the server restarts.</p>
+          <div className="sidebar-note">
+            <p className="sidebar-account"><UserRound size={16} aria-hidden="true" /><span>{user.username}</span></p>
+            <p>Chats are kept until the server restarts.</p>
+          </div>
         </aside>
 
         <main className="chat-main">
+          {signOutError && <p className="startup-error" role="alert">{signOutError}</p>}
           {startupError && (
             <div className="startup-error" role="alert">
               <span>{startupError}</span>
@@ -243,6 +279,75 @@ function App() {
         </main>
       </div>
       {deleteTarget && <DeleteChatDialog chat={deleteTarget} onConfirm={deleteChat} onClose={cancelDelete} />}
+    </div>
+  )
+}
+
+function App() {
+  const [user, setUser] = useState(null)
+  const [checking, setChecking] = useState(true)
+  const [sessionError, setSessionError] = useState('')
+  const [attempt, setAttempt] = useState(0)
+
+  const refreshSession = useCallback(() => {
+    setUser(null)
+    setChecking(true)
+    setSessionError('')
+    setAttempt(previous => previous + 1)
+  }, [])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    request('/api/auth/session', { signal: controller.signal })
+      .then(({ user }) => {
+        if (!controller.signal.aborted) setUser(user)
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) setSessionError(error.message)
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setChecking(false)
+      })
+    return () => controller.abort()
+  }, [attempt])
+
+  useEffect(() => {
+    function sessionChanged(event) {
+      if (event.key === sessionChangeKey) refreshSession()
+    }
+    window.addEventListener('storage', sessionChanged)
+    window.addEventListener(sessionRequired, refreshSession)
+    return () => {
+      window.removeEventListener('storage', sessionChanged)
+      window.removeEventListener(sessionRequired, refreshSession)
+    }
+  }, [refreshSession])
+
+  function signedIn(account) {
+    setUser(account)
+    announceSessionChange()
+  }
+
+  async function signOut() {
+    await request('/api/auth/sign-out', { method: 'POST' })
+    setUser(null)
+    announceSessionChange()
+  }
+
+  if (user) return <ChatWorkspace key={user.id} user={user} onSignOut={signOut} />
+
+  return (
+    <div className="app">
+      <AppHeader status={checking ? 'Connecting…' : sessionError ? 'API unavailable' : 'API connected'} />
+      <main className="auth-main">
+        {checking ? <p className="chat-loading" role="status">Checking sign-in…</p>
+          : sessionError ? (
+            <div className="auth-card">
+              <p className="auth-error" role="alert">{sessionError}</p>
+              <button className="subtle-button" type="button" onClick={refreshSession}>Retry connection</button>
+            </div>
+          ) : <AuthForm onAuthenticated={signedIn} />}
+      </main>
     </div>
   )
 }

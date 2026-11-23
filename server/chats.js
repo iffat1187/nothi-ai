@@ -4,10 +4,11 @@ const { win32 } = require('node:path');
 const { answerChatQuestion, getQuestion } = require('./ask');
 const { extractPdf } = require('./pdf');
 const { extractPhoto } = require('./ocr');
+const { requireUser } = require('./auth');
 const RequestError = require('./request-error');
 
 const router = express.Router();
-const chats = new Map();
+const chatsByUser = new Map();
 const readFile = express.raw({
   type: ['application/pdf', 'image/jpeg', 'image/png'],
   limit: '5mb',
@@ -30,12 +31,15 @@ function resetAttachmentContext(chat) {
   chat.updatedAt = Date.now();
 }
 
-router.use((_request, response, next) => {
-  response.set('Cache-Control', 'no-store');
+router.use(requireUser, (_request, response, next) => {
+  const userId = response.locals.user.id;
+  if (!chatsByUser.has(userId)) chatsByUser.set(userId, new Map());
+  response.locals.chats = chatsByUser.get(userId);
   next();
 });
 
 router.get('/', (_request, response) => {
+  const { chats } = response.locals;
   response.json([...chats.values()].reverse().sort((a, b) => b.updatedAt - a.updatedAt).map(summarize));
 });
 
@@ -49,12 +53,12 @@ router.post('/', (_request, response) => {
     messages: [],
     busy: null,
   };
-  chats.set(chat.id, chat);
+  response.locals.chats.set(chat.id, chat);
   response.status(201).json(chat);
 });
 
 router.param('chatId', (_request, response, next, id) => {
-  const chat = chats.get(id);
+  const chat = response.locals.chats.get(id);
   if (!chat) return next(new RequestError(404, 'This chat is no longer available. Chats are kept while the server is running.'));
   response.locals.chat = chat;
   next();
@@ -63,7 +67,7 @@ router.param('chatId', (_request, response, next, id) => {
 router.get('/:chatId', (_request, response) => response.json(response.locals.chat));
 
 router.delete('/:chatId', (_request, response) => {
-  const { chat } = response.locals;
+  const { chat, chats } = response.locals;
   requireIdle(chat);
   chats.delete(chat.id);
   response.json({ id: chat.id });

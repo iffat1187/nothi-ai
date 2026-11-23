@@ -8,6 +8,7 @@ try {
 }
 
 const express = require('express');
+const { authRouter, requireUser } = require('./auth');
 const { askRouter } = require('./ask');
 const { ocrRouter } = require('./ocr');
 const { pdfRouter } = require('./pdf');
@@ -17,13 +18,24 @@ const app = express();
 const host = '127.0.0.1';
 const port = 3001;
 
+app.use('/api', (request, response, next) => {
+  response.set('Cache-Control', 'no-store');
+  const origin = request.get('Origin');
+  const isRead = ['GET', 'HEAD', 'OPTIONS'].includes(request.method);
+  if (!isRead && origin && origin !== request.protocol + '://' + request.get('host')) {
+    return response.status(403).json({ error: 'Open Nothi AI directly to make this request.' });
+  }
+  next();
+});
+
 app.get('/api/health', (_request, response) => {
   response.json({ status: 'ok' });
 });
 
-app.use('/api/ask', askRouter);
-app.use('/api/ocr', ocrRouter);
-app.use('/api/extract', pdfRouter);
+app.use('/api/auth', authRouter);
+app.use('/api/ask', requireUser, askRouter);
+app.use('/api/ocr', requireUser, ocrRouter);
+app.use('/api/extract', requireUser, pdfRouter);
 app.use('/api/chats', chatRouter);
 
 app.use('/api', (_request, response) => {
